@@ -1,19 +1,59 @@
 USE HumanResource
 GO
--- 1.	Candidate applies for job openings at Your Company.
+
+DECLARE @TheCandidateID INT
 DECLARE @TheApplicationID INT
-BEGIN TRAN CandidateAppliesJob
-    DECLARE @TheCandidateID INT
-    EXEC spCreateCandidate @FirstName='Bronco', @LastName='Lease', @Email='BroncoLea@gmail.com', @Phone='214-483-0048', @CandidateID=@TheCandidateID OUTPUT
+-- First Candidate successfully get offer through 3 reviews including 3 tests and 2 interviews, which only final review is on-site type
+BEGIN TRAN Candidate1OfferedJob
+	-- Create first candidate profile
+	EXEC spCreateCandidate @FirstName='Bronco', @LastName='Lease', @Email='BroncoLea@gmail.com', @Phone='214-483-0048', @CandidateID=@TheCandidateID OUTPUT
+	EXEC spCreateDocument @CandidateID=@TheCandidateID
+	-- Start first application
     EXEC spCreateApplication @CandidateID=@TheCandidateID, @JobId=12355, @ApplicationID=@TheApplicationID OUTPUT
-    EXEC spCreateDocument @CandidateID=@TheCandidateID
+	-- Start first review process
+	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='First Review', @AssignTest=1
+	EXEC spUpdateTest @ApplicationID=@TheApplicationID, @Grade='Passed'
+	--EXEC spUpdateInterview @ApplicationID=@TheApplicationID, @Result='Passed'
+	-- Start second review process
+	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Second Review', @AssignTest=1, @AssignInterview=1
+
+	EXEC spUpdateTest @ApplicationID=@TheApplicationID, @Grade='Passed'
+	EXEC spUpdateInterview @ApplicationID=@TheApplicationID, @Result='Passed'
+	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Third Review', @Type='Onsite', @AssignTest=1, @AssignInterview=1 
 COMMIT;
 
--- 2.	Company rejects or selects the candidate for 1st interview, which can be online or onsite.
-PRINT('TheApplicationID=' + CONVERT(VARCHAR, @TheApplicationID))
-PRINT('EMPTY LINE');
-EXEC dbo.spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Under Interview'
+BEGIN TRAN Candidate2Rejected
+	-- Create second candidate profile
+	EXEC spCreateCandidate @FirstName='Paris', @LastName='Gordan', @Email='ParisGordan@gmail.com', @Phone='559-481-0038', @CandidateID=@TheCandidateID OUTPUT
+	EXEC spCreateDocument @CandidateID=@TheCandidateID
+	-- Start first application
+    EXEC spCreateApplication @CandidateID=@TheCandidateID, @JobId=12355, @ApplicationID=@TheApplicationID OUTPUT
+	-- Start first review process
+	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='First Review', @AssignTest=1
+	EXEC spUpdateTest @ApplicationID=@TheApplicationID, @Grade='Failed'
+	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Rejected'
 
--- 3.	Company rejects or selects the candidate for the following interviews till the final ‘nth’ interview.
-EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Second Interview' 
-EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Third Interview', @Type='Onsite' 
+	-- Start second application
+    EXEC spCreateApplication @CandidateID=@TheCandidateID, @JobId=12355, @ApplicationID=@TheApplicationID OUTPUT
+	-- Start first review process
+	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='First Review', @AssignTest=1
+	EXEC spUpdateTest @ApplicationID=@TheApplicationID, @Grade='Passed'
+	-- Start second review process
+	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Second Review', @AssignTest=1, @AssignInterview=1
+	EXEC spUpdateTest @ApplicationID=@TheApplicationID, @Grade='Passed'
+	EXEC spUpdateInterview @ApplicationID=@TheApplicationID, @Result='Failed'
+	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Rejected'
+
+	-- Start third application
+    EXEC spCreateApplication @CandidateID=@TheCandidateID, @JobId=12355, @ApplicationID=@TheApplicationID OUTPUT
+COMMIT;
+
+BEGIN TRAN Candidate3WaitedList
+	-- Create third candidate profile
+	EXEC spCreateCandidate @FirstName='Hallie', @LastName='Alexis', @Email='HallieAlexis@gmail.com', @Phone='559-378-1834', @CandidateID=@TheCandidateID OUTPUT
+	EXEC spCreateDocument @CandidateID=@TheCandidateID
+	-- Start first application
+    EXEC spCreateApplication @CandidateID=@TheCandidateID, @JobId=12355, @ApplicationID=@TheApplicationID OUTPUT
+COMMIT;
+--PRINT('TheApplicationID=' + CONVERT(VARCHAR, @TheApplicationID))
+--PRINT('EMPTY LINE');
