@@ -9,6 +9,25 @@ GO
 
 USE [HumanResource]
 GO
+
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+CREATE TABLE [dbo].[Departments](
+	[DepartmentID] [int] NOT NULL,
+	[DepartmentName] [varchar](50) NOT NULL,
+    [ChairmanName] [varchar](50) NOT NULL,
+    [Email] [varchar](50) NOT NULL,
+    [Phone] [varchar](50) NOT NULL,
+    --[Title] [varchar](50) NOT NULL,
+    PRIMARY KEY CLUSTERED 
+    (
+        [DepartmentID] ASC
+    )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+) ON [PRIMARY]
+GO
+
 CREATE SCHEMA Recruitment
 GO
 SET ANSI_NULLS ON
@@ -17,10 +36,14 @@ SET QUOTED_IDENTIFIER ON
 GO
 CREATE TABLE [Recruitment].Jobs (
     [JobID] [int] IDENTITY(1,1) NOT NULL,
-	[Position] [varchar](50) NOT NULL,
+	[DepartmentID] [int] NOT NULL -- alias job categories as well
+		REFERENCES dbo.Departments (DepartmentID),
 	[Title] [varchar](50) NOT NULL,
-	[Type] [varchar](50) NOT NULL,
-	[Medium] [varchar](50) NOT NULL,
+	[Ranking] [varchar](50) NOT NULL DEFAULT 'I',
+	[Type] [varchar](50) NOT NULL DEFAULT 'Full-time',
+	[Status] [varchar](50) NOT NULL DEFAULT 'Opened',
+	[StartDate] [datetime] NOT NULL DEFAULT GETDATE(),
+	[BaseSalary] [smallmoney] NOT NULL DEFAULT 40000,
 	[SlotsRemained] [int] NOT NULL
         CHECK (SlotsRemained >= 0),
     PRIMARY KEY CLUSTERED 
@@ -77,27 +100,13 @@ CREATE TABLE [Recruitment].[Applications](
     [JobID] [int] NOT NULL
         REFERENCES Recruitment.Jobs (JobID),
     [Status] [varchar](50) NULL DEFAULT 'Under Consideration',    
+	[Platform] [varchar](50) NULL DEFAULT 'Other',
+	[Salary] [smallmoney] NULL,
+	[StartDate] [datetime] NOT NULL DEFAULT GETDATE(),
+	[EndDate] [datetime] NULL
     PRIMARY KEY CLUSTERED 
     (
         [ApplicationID] ASC
-    )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
-) ON [PRIMARY]
-GO
-
-SET ANSI_NULLS ON
-GO
-SET QUOTED_IDENTIFIER ON
-GO
-CREATE TABLE [Recruitment].[Departments](
-	[DepartmentID] [int] IDENTITY(1,1) NOT NULL,
-	[DepartmentName] [varchar](50) NOT NULL,
-    [ChairmanName] [varchar](50) NOT NULL,
-    [Email] [varchar](50) NOT NULL,
-    [Phone] [varchar](50) NOT NULL,
-    --[Title] [varchar](50) NOT NULL,
-    PRIMARY KEY CLUSTERED 
-    (
-        [DepartmentID] ASC
     )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
 ) ON [PRIMARY]
 GO
@@ -114,7 +123,7 @@ CREATE TABLE [Recruitment].[Interviewers](
     [Phone] [varchar](50) NOT NULL UNIQUE,
     [Title] [varchar](50) NOT NULL,
     [DepartmentID] [int] NOT NULL
-        REFERENCES Recruitment.Departments (DepartmentID),
+        REFERENCES dbo.Departments (DepartmentID),
     PRIMARY KEY CLUSTERED 
     (
         [InterviewerID] ASC
@@ -261,7 +270,41 @@ GO
 --    SELECT *
 --    FROM Applications
 --GO
+
 -- Functions
+CREATE FUNCTION dbo.fnGetRandomDate()
+RETURNS DATETIME AS
+BEGIN
+	RETURN GETDATE()
+END
+GO
+
+-- Invalid use of a side-effecting operator 'rand' within a function.
+--CREATE FUNCTION dbo.fnGetRandomLenNo(
+--	@Length INT = 1
+--) RETURNS INT AS
+--BEGIN
+--	DECLARE @Base INT = CONVERT(INT, POWER(10, (@Length-1)))
+--	RETURN CAST(FLOOR(RAND()*9*@Base+@Base) AS INT)
+--END
+--GO
+
+--CREATE FUNCTION dbo.fnGetRandomID(
+--	@TableName VARCHAR(50)
+--) RETURNS INT AS
+--BEGIN
+--	DECLARE @Offset INT = FLOOR(RAND()*(SELECT COUNT(*) FROM Recruitment.Interviewers))
+--	DECLARE @IDName VARCHAR(50)
+--	DECLARE @ID INT = (
+--		SELECT @IDName FROM @TableName
+--		ORDER BY @IDName ASC
+--		OFFSET @Offset ROWS
+--		FETCH NEXT 1 ROWS ONLY
+--		)
+--	RETURN @ID
+--END
+--GO
+
 CREATE FUNCTION dbo.fnGetInterviewNo(
     --@CandidateID INT = 0,
     @ApplicationID INT = 0
@@ -308,6 +351,7 @@ GO
 CREATE PROC spCreateApplication
     @CandidateID INT = 0,
     @JobID INT = 0,
+	@Platform VARCHAR(50) = 'Career Site',
     @ApplicationID INT = 0 OUTPUT
 AS
 IF(@CandidateID=0 OR @JobID=0)
@@ -319,9 +363,9 @@ BEGIN
     SET @ApplicationID = @ID
 	SET IDENTITY_INSERT Recruitment.Applications ON
     INSERT Recruitment.Applications (
-        ApplicationID, CandidateID, JobID
+        ApplicationID, CandidateID, JobID, Platform, StartDate
     ) VALUES
-    (@ID, @CandidateID, @JobID)
+    (@ID, @CandidateID, @JobID, @Platform, GETDATE())
 	SET IDENTITY_INSERT Recruitment.Applications OFF
 END
 GO
@@ -358,25 +402,25 @@ BEGIN
 END
 GO
 
-CREATE PROC spCreateJob
-    @Position varchar(50) = NULL,
-    @Title varchar(50) = NULL,
-    @Type varchar(50) = NULL,
-    @Medium varchar(50) = NULL,
-    @SlotsRemained INT = 1
-AS
-IF(@Position IS NULL OR @Title IS NULL OR @Type IS NULL OR @Medium IS NULL)
-    PRINT('ERROR. Must provide valid input for new Job.')
-ELSE
-BEGIN
-    DECLARE @ID INT;
-    SET @ID = (SELECT FLOOR(RAND()*90000+10000))
-    INSERT Recruitment.Jobs (
-        JobID, Position, Title, Type, Medium, SlotsRemained
-    ) VALUES
-    (@ID, @Position, @Title, @Type, @Medium, @SlotsRemained)
-END
-GO
+--CREATE PROC spCreateJob
+--    @Position varchar(50) = NULL,
+--    @Title varchar(50) = NULL,
+--    @Type varchar(50) = NULL,
+--    @Medium varchar(50) = NULL,
+--    @SlotsRemained INT = 1
+--AS
+--IF(@Position IS NULL OR @Title IS NULL OR @Type IS NULL OR @Medium IS NULL)
+--    PRINT('ERROR. Must provide valid input for new Job.')
+--ELSE
+--BEGIN
+--    DECLARE @ID INT;
+--    SET @ID = (SELECT FLOOR(RAND()*90000+10000))
+--    INSERT Recruitment.Jobs (
+--        JobID, Position, Title, Type, Medium, SlotsRemained
+--    ) VALUES
+--    (@ID, @Position, @Title, @Type, @Medium, @SlotsRemained)
+--END
+--GO
 
 CREATE PROC spCreateDocument
     @CandidateID INT = 0
@@ -404,29 +448,14 @@ BEGIN
 END
 GO
 
---BEGIN TRY  
---    -- Generate a divide-by-zero error.  
---    SELECT 1/0;  
---END TRY  
---BEGIN CATCH  
---    SELECT  
---        ERROR_NUMBER() AS ErrorNumber  
---        ,ERROR_SEVERITY() AS ErrorSeverity  
---        ,ERROR_STATE() AS ErrorState  
---        ,ERROR_PROCEDURE() AS ErrorProcedure  
---        ,ERROR_LINE() AS ErrorLine  
---        ,ERROR_MESSAGE() AS ErrorMessage;  
---END CATCH;  
---GO  
 CREATE PROC spCreateInterview
     @ApplicationID INT = 0,
     @Type VARCHAR(50) = 'Online',
 	@InterviewID INT = NULL OUTPUT
 AS
-IF(@ApplicationID=0 OR @ApplicationID IS NULL)
-    PRINT('ERROR. Must provide valid input to create interview. ' + 'ApplicationID=' + CONVERT(VARCHAR, @ApplicationID))
-	 --CONVERT(VARCHAR, ERROR_MESSAGE())
-ELSE
+--IF(@ApplicationID=0 OR @ApplicationID IS NULL)
+--    PRINT('ERROR. Must provide valid input to create interview. ' + 'ApplicationID=' + CONVERT(VARCHAR, @ApplicationID))
+--ELSE
 BEGIN
     DECLARE @ID INT = FLOOR(RAND()*90000+10000)
     DECLARE @StartDate datetime2 = DATEADD(WEEK, FLOOR(RAND()*7), GETDATE())
@@ -447,11 +476,12 @@ CREATE PROC spCreateTest
     @Type VARCHAR(50) = 'Online',
 	@TestID INT = NULL OUTPUT
 AS
-IF(@ApplicationID=0)
-    PRINT('ERROR. Must provide valid input to create test.')
-ELSE
+--IF(@ApplicationID=0)
+--    PRINT('ERROR. Must provide valid input to create test.')
+--ELSE
 BEGIN
     DECLARE @ID INT = FLOOR(RAND()*90000000+10000000)
+    --DECLARE @ID INT = dbo.fnGetRandomLenNo(8)
     DECLARE @StartDate datetime2 = DATEADD(WEEK, FLOOR(RAND()*7), GETDATE())
     DECLARE @Answer VARCHAR(500) = 'www.corp/humanresources/' + CONVERT(VARCHAR, CONVERT(INT, FLOOR(RAND()*90000000+10000000))) + CHAR(RAND()*25+65) + CHAR(RAND()*25+65) + CHAR(RAND()*25+65) + CHAR(RAND()*25+65)
 	DECLARE @Round INT = dbo.fnGetTestNo(@ApplicationID)+1
@@ -485,6 +515,7 @@ BEGIN
 			OFFSET @Offset ROWS
 			FETCH NEXT 1 ROWS ONLY
 			)
+		--DECLARE @InterviewerID INT = dbo.fnGetRandomID('Recruitment.Interviewers')
 		IF (@InterviewerID NOT IN (SELECT * FROM @Interviewers))
 			INSERT @Interviewers VALUES (@InterviewerID)
 	END
@@ -512,11 +543,6 @@ BEGIN
 		InterviewID, TestID, ChiefInterviewer, ViceInterviewer, InterviewerMember1, InterviewerMember2, InterviewerMember3
 	) VALUES
 	(@InterviewID, @TestID, @Chief, @Vice, @Member1, @Member2, @Member3)
-	--WHILE (SELECT COUNT(*) FROM @Interviewers) > 0
-	--BEGIN
-	--	UPDATE Recruitment.InterviewersGroup
-	--	SET
-	--END
 	IF(@InterviewID IS NOT NULL)
 		PRINT('InterviewID=' + CONVERT(VARCHAR, @InterviewID) + ' is assigned interviewer group.')
 	ELSE IF(@TestID IS NOT NULL)
@@ -529,17 +555,58 @@ CREATE PROC spUpdateApplication
     @ApplicationID INT = 0,
     @Status varchar(50) = 'Under Consideration',
     @Type varchar(50) = 'Online',
+	@Salary smallmoney = NULL,
     @AssignTest bit = 0,
 	@AssignInterview bit = 0
 AS
-IF(@ApplicationID=0 OR @Status=NULL)
-    PRINT('ERROR. Must provide valid input to update application.')
-ELSE
+--IF(@ApplicationID=0 OR @Status=NULL)
+--    PRINT('ERROR. Must provide valid input to update application.')
+--ELSE
 BEGIN
-UPDATE Recruitment.Applications
-SET Status = @Status
-WHERE ApplicationID = @ApplicationID
-IF(@Status NOT IN ('Under Consideration', 'Rejected'))
+	DECLARE @JobID INT = (SELECT JobID FROM Recruitment.Applications WHERE ApplicationID=@ApplicationID)
+	DECLARE @CandidateID INT = (SELECT CandidateID FROM Recruitment.Applications WHERE ApplicationID=@ApplicationID)
+IF(@Status = 'Offered')
+BEGIN
+	DECLARE @Slots INT = 
+	(SELECT SlotsRemained FROM Recruitment.Jobs WHERE JobID=@JobID)
+	IF(@Slots>0)
+	BEGIN
+		UPDATE Recruitment.Jobs
+		SET SlotsRemained=@Slots-1
+		WHERE JobID=@JobID
+		PRINT('Job ' + CAST(@JobID AS VARCHAR) + ' is ' + @Status + ', JobID=' + CAST(@JobID AS VARCHAR) + ', ApplicationID=' + CAST(@ApplicationID AS VARCHAR) + '.')
+	END
+	ELSE
+	BEGIN
+		SET @Status = 'on-call for next job opportunity'
+		PRINT('Candidate is on-call for next job opportunity. ApplicationID=' + CAST(@ApplicationID AS VARCHAR) + ', JobID=' + CAST(@JobID AS VARCHAR) + '.')
+	END
+END
+ELSE IF(@Status = 'Waiting')
+BEGIN
+	PRINT('Candidate filed an complaint on review process. ApplicationID=' + CAST(@ApplicationID AS VARCHAR) + ', JobID=' + CAST(@JobID AS VARCHAR) + '.')
+END
+ELSE IF(@Status = 'Negotiating')
+BEGIN
+	PRINT('Job ' + CAST(@JobID AS VARCHAR) + ' is ' + @Status + ', JobID=' + CAST(@JobID AS VARCHAR) + ', ApplicationID=' + CAST(@ApplicationID AS VARCHAR) + '.')
+	UPDATE Recruitment.Applications
+	SET Salary=@Salary
+	WHERE ApplicationID = @ApplicationID	
+END
+ELSE IF(@Status = 'Declined')
+BEGIN
+	SET @Slots = 
+	(SELECT SlotsRemained FROM Recruitment.Jobs WHERE JobID=@JobID)
+	UPDATE Recruitment.Jobs
+	SET SlotsRemained=@Slots+1
+	WHERE JobID=@JobID
+	PRINT('Job is Declined by candidate. JobID=' + CAST(@JobID AS VARCHAR) + ', ApplicationID=' + CAST(@ApplicationID AS VARCHAR) +'.')
+END
+ELSE IF(@Status = 'Accepted')
+BEGIN
+	PRINT('Job ' + CAST(@JobID AS VARCHAR) + ' is ' + @Status + ', JobID=' + CAST(@JobID AS VARCHAR) + ', ApplicationID=' + CAST(@ApplicationID AS VARCHAR) + '.')
+END
+ELSE IF(@Status <> 'Rejected')
 	BEGIN
 	PRINT('Application ' + CONVERT(VARCHAR(50), @ApplicationID) + ' is under ' + @Status + '.')
 	IF(@AssignInterview=1)
@@ -557,9 +624,13 @@ IF(@Status NOT IN ('Under Consideration', 'Rejected'))
 		EXEC spCreateInterviewerGroup @InterviewID=NULL, @TestID=@TestID
 	END
 	END
-ELSE
-    --PRINT('Candidate ' + CONVERT(VARCHAR(50), @CandidateID) + ' is rejected.')
+ELSE IF(@Status = 'Rejected')
+BEGIN
 	PRINT('Candidate is rejected. Application ' + CONVERT(VARCHAR(50), @ApplicationID) + ' is archived.')
+END
+	UPDATE Recruitment.Applications
+	SET Status = @Status
+	WHERE ApplicationID = @ApplicationID
 END
 GO
 
@@ -628,7 +699,7 @@ CREATE LOGIN Managers WITH PASSWORD = 'Managers',
 CREATE USER Madison FOR LOGIN Managers
 CREATE ROLE Managers
 ALTER ROLE Managers ADD MEMBER Madison
-GRANT SELECT, UPDATE, INSERT ON Recruitment.Departments TO Managers
+GRANT SELECT, UPDATE, INSERT ON dbo.Departments TO Managers
 
 IF EXISTS(SELECT name FROM master.sys.server_principals WHERE name = 'Candidates')
 	DROP LOGIN Candidates
@@ -645,11 +716,16 @@ GRANT SELECT ON Recruitment.Applications TO Candidates
 -- Transactions
 -- Query 1
 -- Populated values insertion
+INSERT dbo.Departments (
+    DepartmentID, DepartmentName, ChairmanName, Email, Phone
+) VALUES
+(390, 'Recruitment', 'Braddle Anthony', 'Recruitment@corp.com', '800-329-9977')
+
 SET IDENTITY_INSERT [Recruitment].[Jobs] ON
 INSERT Recruitment.Jobs (
-    JobID, Position, Title, Type, Medium, SlotsRemained
+    JobID, DepartmentID, Title, Ranking, Type, BaseSalary, StartDate, SlotsRemained
 ) VALUES
-(12355, 'Software Engineer', 'Software Engineer Roles', 'I', '80,000', 7)
+(12355, 390, 'Software Engineer', 'I', 'Full-time', 80000, dbo.fnGetRandomDate(), 1)
 SET IDENTITY_INSERT [Recruitment].[Jobs] OFF
 
 --SET IDENTITY_INSERT [Recruitment].[Candidates] ON
@@ -658,13 +734,6 @@ INSERT Recruitment.Candidates (
 ) VALUES
 (749303, 'Davison', 'Miles', 'DavMi@gmail.com', '315-882-0365', 'Strong Candidate')
 --SET IDENTITY_INSERT [Recruitment].[Candidates] OFF
-
-SET IDENTITY_INSERT [Recruitment].[Departments] ON
-INSERT Recruitment.Departments (
-    DepartmentID, DepartmentName, ChairmanName, Email, Phone
-) VALUES
-(390, 'Recruitment', 'Braddle Anthony', 'Recruitment@corp.com', '800-329-9977')
-SET IDENTITY_INSERT [Recruitment].[Departments] OFF
 
 SET IDENTITY_INSERT [Recruitment].[Documents] ON
 INSERT Recruitment.Documents (
