@@ -3,6 +3,7 @@ GO
 
 DECLARE @TheCandidateID INT
 DECLARE @TheApplicationID INT
+DECLARE @TheReimbursementID INT
 -- First Candidate successfully get offer through 3 reviews including 3 tests and 2 interviews, which only final review is on-site type. He passed all the tests and interviews, then received an offer. After negotiating, offer is accepted.
 BEGIN TRAN Candidate1AcceptedJob
 	-- Create first candidate profile
@@ -21,12 +22,15 @@ BEGIN TRAN Candidate1AcceptedJob
 	EXEC spUpdateInterview @ApplicationID=@TheApplicationID, @Result='Passed'
 	-- Start third review process
 	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Third Review', @Type='Onsite', @AssignTest=1, @AssignInterview=1 
+	SET @TheReimbursementID = (SELECT ReimbursementID FROM Recruitment.Reimbursements WHERE ApplicationID=@TheApplicationID)
+	EXEC spUpdateReimbursement @ReimbursementID=@TheReimbursementID
 	EXEC spUpdateTest @ApplicationID=@TheApplicationID, @Grade='Passed'
 	EXEC spUpdateInterview @ApplicationID=@TheApplicationID, @Result='Passed'
 	-- Job offered, candidate negotiated then accepted
 	EXEC spUpdateApplication @Status='Offered'
 	EXEC spUpdateApplication @Status='Negotiating', @Salary=60000
 	EXEC spUpdateApplication @Status='Accepted'
+	EXEC spUpdateOnboarding @ApplicationID=@TheApplicationID,  @Status='Onboard', @AttendingDate=0
 COMMIT;
 
 -- Second candidate first applies job and was rejected in first review. His second application is rejected in second review and complaint about the interview process, which solved as a grant of new interview, and rejected again in third review.
@@ -77,14 +81,16 @@ BEGIN TRAN Candidate3WaitedList
 	EXEC spUpdateTest @ApplicationID=@TheApplicationID, @Grade='Passed'
 	EXEC spUpdateInterview @ApplicationID=@TheApplicationID, @Result='Passed'
 	-- Start second review
-	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Second Review', @AssignTest=0, @AssignInterview=1
+	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Second Review', @AssignTest=0, @AssignInterview=1, @Type='OnSite'
+	SET @TheReimbursementID = (SELECT ReimbursementID FROM Recruitment.Reimbursements WHERE ApplicationID=@TheApplicationID)
+	EXEC spUpdateReimbursement @ReimbursementID=@TheReimbursementID, @AmountApproved=1000
 	EXEC spUpdateInterview @ApplicationID=@TheApplicationID, @Result='Passed'
 	-- Job offered but do not have more slots so put candidate in another list
 	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Offered'
 COMMIT;
 
 -- Forth candidate has similar review process to candidate 3 which has 2 reviews and get offered, but candidate reject the offer this time
-BEGIN TRAN Candidate4DeclinedJob
+BEGIN TRAN Candidate4Declined
 	-- Create third candidate profile
 	EXEC spCreateCandidate @FirstName='Adam', @LastName='Nashalie', @Email='AdamNashalie@gmail.com', @Phone='916-338-1134', @CandidateID=@TheCandidateID OUTPUT
 	EXEC spCreateDocument @CandidateID=@TheCandidateID
@@ -96,10 +102,34 @@ BEGIN TRAN Candidate4DeclinedJob
 	EXEC spUpdateTest @ApplicationID=@TheApplicationID, @Grade='Passed'
 	EXEC spUpdateInterview @ApplicationID=@TheApplicationID, @Result='Passed'
 	-- Start second review
-	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Second Review', @AssignTest=0, @AssignInterview=1
+	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Second Review', @AssignTest=0, @AssignInterview=1, @Type='OnSite'
+	SET @TheReimbursementID = (SELECT ReimbursementID FROM Recruitment.Reimbursements WHERE ApplicationID=@TheApplicationID)
+	EXEC spUpdateReimbursement @ReimbursementID=@TheReimbursementID
 	EXEC spUpdateInterview @ApplicationID=@TheApplicationID, @Result='Passed'
 	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Offered'
 	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Declined'
 COMMIT;
---PRINT('TheApplicationID=' + CONVERT(VARCHAR, @TheApplicationID))
---PRINT('EMPTY LINE');
+
+-- Fifth candidate has simliar review process to candidate 4 and 3. But he fails to onboard in time, then was put into blacklist
+BEGIN TRAN Candidate5InBlacklist
+	-- Create forth candidate profile
+	EXEC spCreateCandidate @FirstName='Frenco', @LastName='Dakota', @Email='FrencoDakota@gmail.com', @Phone='559-255-1893', @CandidateID=@TheCandidateID OUTPUT
+	EXEC spCreateDocument @CandidateID=@TheCandidateID
+	-- Start first application
+	PRINT('Fifth candidate application starts.')
+    EXEC spCreateApplication @CandidateID=@TheCandidateID, @JobId=12355, @ApplicationID=@TheApplicationID OUTPUT
+	-- Start first review
+	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='First Review', @AssignTest=1, @AssignInterview=1
+	EXEC spUpdateTest @ApplicationID=@TheApplicationID, @Grade='Passed'
+	EXEC spUpdateInterview @ApplicationID=@TheApplicationID, @Result='Passed'
+	-- Start second review
+	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Second Review', @AssignTest=0, @AssignInterview=1, @Type='OnSite'
+	SET @TheReimbursementID = (SELECT ReimbursementID FROM Recruitment.Reimbursements WHERE ApplicationID=@TheApplicationID)
+	EXEC spUpdateReimbursement @ReimbursementID=@TheReimbursementID
+	EXEC spUpdateInterview @ApplicationID=@TheApplicationID, @Result='Passed'
+	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Offered'
+	EXEC spUpdateApplication @ApplicationID=@TheApplicationID, @Status='Accepted'
+	-- candidate is put into blacklist because he failed to onboard
+	EXEC spUpdateOnboarding @ApplicationID=@TheApplicationID,  @Status='Failed to Onboard', @AttendingDate=NULL
+	EXEC spPutCandidateInBlacklist @CandidateID=@TheCandidateID
+COMMIT;

@@ -34,7 +34,7 @@ SET ANSI_NULLS ON
 GO
 SET QUOTED_IDENTIFIER ON
 GO
-CREATE TABLE [Recruitment].Jobs (
+CREATE TABLE [Recruitment].[Jobs] (
     [JobID] [int] IDENTITY(1,1) NOT NULL,
 	[DepartmentID] [int] NOT NULL -- alias job categories as well
 		REFERENCES dbo.Departments (DepartmentID),
@@ -146,6 +146,8 @@ CREATE TABLE [Recruitment].[Interviews](
     [Round] [int] NULL DEFAULT 1,
 	[Result] [varchar](50) NULL DEFAULT 'Pending Start',
     [Type] [varchar](50) NOT NULL,
+	[ReviewFromCandidate] [varchar](100) NULL DEFAULT 'good interview experience',
+	[ReviewToCandidate] [varchar](100) NULL DEFAULT 'excellent candidate'
     PRIMARY KEY CLUSTERED 
     (
         [InterviewID] ASC
@@ -167,6 +169,8 @@ CREATE TABLE [Recruitment].[Tests](
     [Round] [int] NULL DEFAULT 1,
     [Answers] [varchar](50) NOT NULL,
     [Grade] [varchar](50) NOT NULL,
+	[ReviewFromCandidate] [varchar](100) NULL DEFAULT 'great test experience',
+	[ReviewToCandidate] [varchar](100) NULL DEFAULT 'excellent candidate'
     PRIMARY KEY CLUSTERED 
     (
         [TestID] ASC
@@ -204,8 +208,9 @@ CREATE TABLE [Recruitment].[Evaluations](
 	[EvaluationID] [int] IDENTITY(1,1) NOT NULL,
 	[ApplicationID] [int] NOT NULL
         REFERENCES Recruitment.Applications (ApplicationID),
-    [Notes] [varchar](50) NOT NULL,
+    [Notes] [varchar](50) NOT NULL DEFAULT 'None',
     [Result] [varchar](50) NOT NULL,
+	[Date] [datetime2] NOT NULL DEFAULT GETDATE(),
     PRIMARY KEY CLUSTERED 
     (
         [EvaluationID] ASC
@@ -219,12 +224,16 @@ SET QUOTED_IDENTIFIER ON
 GO
 -- Reimbursement for candidates
 CREATE TABLE [Recruitment].[Reimbursements](
-	[ReimbursementID] [int] IDENTITY(1,1) NOT NULL,
+	[ReimbursementID] [int] NOT NULL UNIQUE,
 	[ApplicationID] [int] NOT NULL
         REFERENCES Recruitment.Applications (ApplicationID),
-    [Request] [varchar](50) NOT NULL,
-    [Processed] [varchar](50) NOT NULL,
-    [Amount] [int] NOT NULL,
+    [Required] bit NOT NULL DEFAULT 1,
+    [Status] [varchar](50) NOT NULL DEFAULT 'Submitted',
+    [AmountApproved] [smallmoney] NOT NULL DEFAULT 0,
+	[Expense] [smallmoney] NOT NULL DEFAULT 0,
+	[AirlineReservationDetail] [varchar](100) NOT NULL,
+	[HotelReservationDetail] [varchar](100) NOT NULL,
+	[CarRentalDetail] [varchar](100) NOT NULL,
     PRIMARY KEY CLUSTERED 
     (
         [ReimbursementID] ASC
@@ -237,10 +246,14 @@ GO
 SET QUOTED_IDENTIFIER ON
 GO
 CREATE TABLE [Recruitment].[Onboardings](
-	[OnboardingID] [int] IDENTITY(1,1) NOT NULL,
-	[CandidateID] [int] NOT NULL 
-        REFERENCES Recruitment.Candidates (CandidateID),
-    [StartDate] [datetime2] NOT NULL,
+	[OnboardingID] [int] NOT NULL,
+	[ApplicationID] [int] NOT NULL 
+        REFERENCES Recruitment.Applications (ApplicationID),
+	[SpecialistID] [int] NOT NULL,
+	[BackgroundCheck] [bit] NOT NULL DEFAULT 1,
+    [WorkingDate] [datetime] NOT NULL DEFAULT GETDATE(),
+    [AttendingDate] [datetime] NOT NULL DEFAULT GETDATE(),
+	[Status] [varchar](30) NOT NULL DEFAULT 'Pending onboard',
     PRIMARY KEY CLUSTERED 
     (
         [OnboardingID] ASC
@@ -248,6 +261,18 @@ CREATE TABLE [Recruitment].[Onboardings](
 ) ON [PRIMARY]
 GO
 
+CREATE TABLE [Recruitment].[Blacklist](
+	BlacklistID [int] IDENTITY(1,1) NOT NULL,
+	CandidateID [int] NOT NULL 
+        REFERENCES Recruitment.Candidates (CandidateID),
+    [ProcessedDate] [datetime2] NOT NULL DEFAULT GETDATE(),
+	[Reason] [varchar](30) NOT NULL DEFAULT 'Failed to onboard without explanation',
+    PRIMARY KEY CLUSTERED 
+    (
+        [BlacklistID] ASC
+    )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON) ON [PRIMARY]
+) ON [PRIMARY]
+GO
 
 -- Views
 
@@ -256,22 +281,45 @@ CREATE VIEW Recruitment.AllJobs AS
     FROM Recruitment.Jobs
 GO
 
---CREATE VIEW AllCandiates AS
---    SELECT *
---    FROM Candidates
---GO
+CREATE VIEW ApplicationAcceptRateOverall AS
+	SELECT 
+		(SELECT COUNT(*) FROM Recruitment.Applications WHERE Status='Accepted') AS AcceptApplicationNo,
+		(SELECT COUNT(*) FROM Recruitment.Applications) AS TotalApplicationNo,
+		(SELECT COUNT(*) FROM Recruitment.Applications WHERE Status='Accepted')/(SELECT COUNT(*) FROM Recruitment.Applications) AS AcceptRate
+GO
 
---CREATE VIEW AllOnboardings AS
---    SELECT *
---    FROM  Onboardings
---GO
+CREATE VIEW OnboardDateAvg AS
+	SELECT
+		AVG(DATEDIFF(DAY, AttendingDate, WorkingDate)) AS OnboardDateAvg
+	FROM Recruitment.Onboardings
+	WHERE WorkingDate IS NOT NULL
+GO
 
---CREATE VIEW AllApplications AS
---    SELECT *
---    FROM Applications
---GO
+CREATE VIEW AllCandidateInfo AS
+	SELECT C.CandidateID, FirstName, LastName, Email, Phone,		
+		(SELECT COUNT(*) FROM Recruitment.Applications WHERE CandidateID=CandidateID) AS ApplicationTime,
+		A.Status AS LatestStatus
+	FROM Recruitment.Candidates C LEFT JOIN Recruitment.Applications A
+		ON C.CandidateID=A.CandidateID
+GO
+
+CREATE VIEW BlacklistFrequency AS
+	SELECT
+		(SELECT COUNT(*) 
+			--CandidateID, ProcessedDate, Reason
+		FROM Recruitment.Blacklist
+		WHERE ProcessedDate > DATEFROMPARTS(DATEPART(YEAR, GETDATE()),1,1)
+		) AS CurrentYearBlacklistNo,
+
+		(SELECT COUNT(*) 
+		FROM Recruitment.Blacklist
+		WHERE ProcessedDate > DATEFROMPARTS(DATEPART(YEAR, GETDATE())-1,1,1)
+			AND ProcessedDate < DATEFROMPARTS(DATEPART(YEAR, GETDATE())-1,12,31)
+		) AS LastYearBlacklistNo
+GO
 
 -- Functions
+-- Invalid use of a side-effecting operator 'rand' within a function.
 CREATE FUNCTION dbo.fnGetRandomDate()
 RETURNS DATETIME AS
 BEGIN
@@ -279,44 +327,17 @@ BEGIN
 END
 GO
 
--- Invalid use of a side-effecting operator 'rand' within a function.
---CREATE FUNCTION dbo.fnGetRandomLenNo(
---	@Length INT = 1
---) RETURNS INT AS
---BEGIN
---	DECLARE @Base INT = CONVERT(INT, POWER(10, (@Length-1)))
---	RETURN CAST(FLOOR(RAND()*9*@Base+@Base) AS INT)
---END
---GO
-
---CREATE FUNCTION dbo.fnGetRandomID(
---	@TableName VARCHAR(50)
---) RETURNS INT AS
---BEGIN
---	DECLARE @Offset INT = FLOOR(RAND()*(SELECT COUNT(*) FROM Recruitment.Interviewers))
---	DECLARE @IDName VARCHAR(50)
---	DECLARE @ID INT = (
---		SELECT @IDName FROM @TableName
---		ORDER BY @IDName ASC
---		OFFSET @Offset ROWS
---		FETCH NEXT 1 ROWS ONLY
---		)
---	RETURN @ID
---END
---GO
-
+CREATE FUNCTION dbo.fnGetBlacklistNo()
+RETURNS INT AS
+BEGIN
+	RETURN (SELECT COUNT(*) FROM Recruitment.Blacklist)
+END
+GO
+-- Can not use PRINT in functions
 CREATE FUNCTION dbo.fnGetInterviewNo(
-    --@CandidateID INT = 0,
     @ApplicationID INT = 0
 ) RETURNS INT AS
 BEGIN
---	DECLARE @InterviewNo INT = (
---	    SELECT COUNT(*)
---		FROM Recruitment.Interviews I 
---		WHERE I.ApplicationID=@ApplicationID
---	)
---	--PRINT('Application ' + CONVERT(VARCHAR, @ApplicationID) + ' has number of test ' + CONVERT(VARCHAR, @InterviewNo))
---RETURN @InterviewNo
 RETURN(
 	SELECT COUNT(*)
 	FROM Recruitment.Interviews I 
@@ -329,25 +350,74 @@ CREATE FUNCTION fnGetTestNo(
     @ApplicationID INT = 0
 ) RETURNS INT AS
 BEGIN
---	DECLARE @TestNo INT = (
---		SELECT COUNT(*)
---		FROM Recruitment.Tests T
---		WHERE T.ApplicationID=@ApplicationID
---		--JOIN Applications A ON A.ApplicationID = T.ApplicationID
---		--WHERE T.ApplicationID = @ApplicationID OR A.CandidateID = @CandidateID
---	)
---	--SELECT @TestNo AS TestNo;
---	--PRINT('Application ' + CONVERT(VARCHAR, @ApplicationID) + ' has number of test ' + CONVERT(VARCHAR, @TestNo))
---RETURN @TestNo
-RETURN(
-	SELECT COUNT(*)
-	FROM Recruitment.Tests T
-	WHERE T.ApplicationID=@ApplicationID
-)
+	DECLARE @TestNo INT = (
+		SELECT COUNT(*)
+		FROM Recruitment.Tests T
+		WHERE T.ApplicationID=@ApplicationID
+	)
+RETURN @TestNo
 END
 GO
 
 -- Stored Procedure
+CREATE PROC spGetRanLenNo
+	@Length INT = 1,
+	@Number INT OUTPUT
+AS
+	DECLARE @Base INT = CONVERT(INT, POWER(10, (@Length-1)))
+	SET @Number = CAST(FLOOR(RAND()*9*@Base+@Base) AS INT)
+GO
+
+CREATE PROC spGetRanAlphaChar
+	@Length INT = 1,
+	@String VARCHAR = '' OUTPUT
+AS
+	WHILE LEN(@String) < @Length
+	BEGIN
+		-- Get a Character from A-Z
+		SET @String = @String + CHAR(RAND()*25+65) 
+	END
+GO
+
+CREATE PROC spCreateReimbursement
+	@ApplicationID INT = NULL,
+	@AirlineReservationDetails VARCHAR(100) = NULL,
+	@HotelReservationDetails VARCHAR(100) = NULL,
+	@CarRentalDetails VARCHAR(100) = NULL,
+	@Expense SMALLMONEY = 0
+AS
+	DECLARE @No INT, @Str VARCHAR(50)
+	EXEC spGetRanLenNo @Length=8, @Number=@No OUTPUT
+	DECLARE @ReimbursementID INT = @No
+	IF(@AirlineReservationDetails IS NULL)
+	BEGIN
+		EXEC spGetRanLenNo @Length=8, @Number=@No OUTPUT
+		EXEC spGetRanAlphaChar @Length=4, @String=@Str OUTPUT
+		DECLARE @AirlineReservationDetail VARCHAR(100) = CAST(@No AS VARCHAR) + @Str
+	END
+	IF(@HotelReservationDetails IS NULL)
+	BEGIN
+		EXEC spGetRanLenNo @Length=8, @Number=@No OUTPUT
+		EXEC spGetRanAlphaChar @Length=4, @String=@Str OUTPUT
+		DECLARE @HotelReservationDetail VARCHAR(100) = CAST(@No AS VARCHAR) + @Str
+	END
+	IF(@CarRentalDetails IS NULL)
+	BEGIN
+		EXEC spGetRanLenNo @Length=8, @Number=@No OUTPUT
+		EXEC spGetRanAlphaChar @Length=4, @String=@Str OUTPUT
+		DECLARE @CarRentalDetail VARCHAR(100) = CAST(@No AS VARCHAR) + @Str
+	END
+	IF(@Expense=0)
+	BEGIN
+		EXEC spGetRanLenNo @Length=4, @Number=@No OUTPUT
+		SET @Expense = @No
+	END
+	INSERT Recruitment.Reimbursements(
+		ReimbursementID, ApplicationID, Required, Status, AmountApproved, Expense, AirlineReservationDetail, HotelReservationDetail, CarRentalDetail	
+	) VALUES
+	(@ReimbursementID, @ApplicationID, 1, 'Processing', 0, @Expense, @AirlineReservationDetails, @HotelReservationDetails, @CarRentalDetails)
+GO
+
 CREATE PROC spCreateApplication
     @CandidateID INT = 0,
     @JobID INT = 0,
@@ -402,25 +472,26 @@ BEGIN
 END
 GO
 
---CREATE PROC spCreateJob
---    @Position varchar(50) = NULL,
---    @Title varchar(50) = NULL,
---    @Type varchar(50) = NULL,
---    @Medium varchar(50) = NULL,
---    @SlotsRemained INT = 1
---AS
---IF(@Position IS NULL OR @Title IS NULL OR @Type IS NULL OR @Medium IS NULL)
---    PRINT('ERROR. Must provide valid input for new Job.')
---ELSE
---BEGIN
---    DECLARE @ID INT;
---    SET @ID = (SELECT FLOOR(RAND()*90000+10000))
---    INSERT Recruitment.Jobs (
---        JobID, Position, Title, Type, Medium, SlotsRemained
---    ) VALUES
---    (@ID, @Position, @Title, @Type, @Medium, @SlotsRemained)
---END
---GO
+CREATE PROC spCreateOnboarding
+	@ApplicationID INT = NULL
+AS
+BEGIN
+IF(@ApplicationID IS NULL)
+    PRINT('ERROR. Must provide valid input for new Onboarding.')
+ELSE
+BEGIN
+	DECLARE @No INT, @Str VARCHAR(50)
+	EXEC spGetRanLenNo @Length=6, @Number=@No OUTPUT
+	DECLARE @OnboardingID INT = @No
+	EXEC spGetRanLenNo @Length=6, @Number=@No OUTPUT
+	DECLARE @SpecialistID INT = @No
+	INSERT Recruitment.Onboardings(
+	    OnboardingID, ApplicationID, SpecialistID, BackgroundCheck, WorkingDate, AttendingDate, Status		
+	) VALUES
+	(@OnboardingID, @ApplicationID, @SpecialistID, 0, GETDATE(), NULL, 'Pending Onboard')
+END
+END
+GO
 
 CREATE PROC spCreateDocument
     @CandidateID INT = 0
@@ -429,9 +500,11 @@ IF(@CandidateID=0)
     PRINT('ERROR. Must provide valid input for new Document.')
 ELSE
 BEGIN
-	DECLARE @DocumentID INT = FLOOR(RAND()*9000+1000)
+	DECLARE @No INT, @Str VARCHAR(50)
+	EXEC spGetRanLenNo @Length=4, @Number=@No OUTPUT
+	DECLARE @DocumentID INT = @No
     DECLARE @Domain varchar(50);
-    SET @Domain = 'www.corp/humanresources/'
+    SET @Domain = 'www.goodcompany/humanresources/'
     DECLARE @CVs varchar(50);
     DECLARE @ReferenceLetter varchar(50);
     DECLARE @CoverLetter varchar(50);
@@ -483,7 +556,7 @@ BEGIN
     DECLARE @ID INT = FLOOR(RAND()*90000000+10000000)
     --DECLARE @ID INT = dbo.fnGetRandomLenNo(8)
     DECLARE @StartDate datetime2 = DATEADD(WEEK, FLOOR(RAND()*7), GETDATE())
-    DECLARE @Answer VARCHAR(500) = 'www.corp/humanresources/' + CONVERT(VARCHAR, CONVERT(INT, FLOOR(RAND()*90000000+10000000))) + CHAR(RAND()*25+65) + CHAR(RAND()*25+65) + CHAR(RAND()*25+65) + CHAR(RAND()*25+65)
+    DECLARE @Answer VARCHAR(500) = 'www.goodcompany/humanresources/' + CONVERT(VARCHAR, CONVERT(INT, FLOOR(RAND()*90000000+10000000))) + CHAR(RAND()*25+65) + CHAR(RAND()*25+65) + CHAR(RAND()*25+65) + CHAR(RAND()*25+65)
 	DECLARE @Round INT = dbo.fnGetTestNo(@ApplicationID)+1
 	SET IDENTITY_INSERT Recruitment.Tests ON
     INSERT Recruitment.Tests (
@@ -605,10 +678,20 @@ END
 ELSE IF(@Status = 'Accepted')
 BEGIN
 	PRINT('Job ' + CAST(@JobID AS VARCHAR) + ' is ' + @Status + ', JobID=' + CAST(@JobID AS VARCHAR) + ', ApplicationID=' + CAST(@ApplicationID AS VARCHAR) + '.')
+	EXEC spCreateOnboarding @ApplicationID=@ApplicationID
 END
-ELSE IF(@Status <> 'Rejected')
-	BEGIN
+ELSE IF(@Status = 'Rejected')
+BEGIN
+	PRINT('Candidate is rejected. Application ' + CONVERT(VARCHAR(50), @ApplicationID) + ' is archived.')
+END
+ELSE 
+	--IF(@Status <> 'Rejected')
+BEGIN
 	PRINT('Application ' + CONVERT(VARCHAR(50), @ApplicationID) + ' is under ' + @Status + '.')
+	IF(@Status='OnSite')
+	BEGIN
+		EXEC spCreateReimbursement @ApplicaionID=@ApplicationID
+	END
 	IF(@AssignInterview=1)
 	BEGIN
 		DECLARE @InterviewID INT = NULL
@@ -623,14 +706,20 @@ ELSE IF(@Status <> 'Rejected')
         EXEC spCreateTest @ApplicationID=@ApplicationID, @Type=@Type, @TestID=@TestID OUTPUT
 		EXEC spCreateInterviewerGroup @InterviewID=NULL, @TestID=@TestID
 	END
-	END
-ELSE IF(@Status = 'Rejected')
-BEGIN
-	PRINT('Candidate is rejected. Application ' + CONVERT(VARCHAR(50), @ApplicationID) + ' is archived.')
 END
 	UPDATE Recruitment.Applications
 	SET Status = @Status
-	WHERE ApplicationID = @ApplicationID
+	WHERE ApplicationID = @ApplicationID	
+	-- createEvaluation
+	DECLARE @No INT, @Str VARCHAR(50)
+	EXEC spGetRanLenNo @Length=8, @Number=@No OUTPUT
+	DECLARE @EvaluationID INT = @No
+	SET IDENTITY_INSERT [Recruitment].[Evaluations] ON
+	INSERT Recruitment.Evaluations(
+		EvaluationID, ApplicationID, Notes, Result, Date
+	) VALUES
+	(@EvaluationID, @ApplicationID, 'None', @Status, GETDATE())
+	SET IDENTITY_INSERT [Recruitment].[Evaluations] OFF
 END
 GO
 
@@ -665,6 +754,73 @@ SET Result=@Result
 WHERE ApplicationID = @ApplicationID AND
 	Round = @Round
 PRINT('ApplicationID ' + CONVERT(VARCHAR, @ApplicationID) + ' is ' + @Result + ' in Interview ' + CONVERT(VARCHAR, @Round) + '.')
+END
+GO
+
+CREATE PROC spUpdateReimbursement
+	@ReimbursementID INT = NULL,
+	@AmountApproved SMALLMONEY = NULL,
+	@AirlineReservationDetails VARCHAR(100) = NULL,
+	@HotelReservationDetails VARCHAR(100) = NULL,
+	@CarRentalDetails VARCHAR(100) = NULL,
+	@Status VARCHAR(50) = 'Processed',
+	@Required BIT = 1
+AS
+IF(@ReimbursementID=NULL OR @AmountApproved=NULL)
+    PRINT('ERROR. Must provide valid input to update Reimbursement.')
+ELSE
+BEGIN
+	IF(@AmountApproved IS NULL)
+		SET @AmountApproved = (SELECT Expense FROM Recruitment.Reimbursements WHERE ReimbursementID=@ReimbursementID)
+	UPDATE Recruitment.Reimbursements
+	SET 
+		AmountApproved=@AmountApproved,
+		Status=@Status
+		--AirlineReservationDetails = @AirlineReservationDetails,
+		--HotelReservationDetails = @HotelReservationDetails,
+		--CarRentalDetails = @CarRentalDetails
+	WHERE ReimbursementID=@ReimbursementID
+END
+GO
+
+CREATE PROC spUpdateOnboarding
+	@OnboardingID INT = NULL,
+	@BackgroundCheck BIT = 1,
+	@ApplicationID INT = NULL,
+	@AttendingDate DATETIME = NULL,
+	@Status VARCHAR(30) = 'Onboard'
+AS
+BEGIN
+IF((@OnboardingID IS NULL) AND (@ApplicationID IS NULL))
+    PRINT('ERROR. Must provide valid input to update Onboarding.')
+ELSE
+BEGIN
+	IF(@AttendingDate IS NULL OR @AttendingDate=0)
+		SET @AttendingDate = GETDATE()
+	UPDATE Recruitment.Onboardings
+	SET
+		BackgroundCheck=@BackgroundCheck,
+		AttendingDate=@AttendingDate,
+		Status=@Status
+	WHERE OnboardingID=@OnboardingID OR ApplicationID=@ApplicationID
+END
+END
+GO
+
+CREATE PROC spPutCandidateInBlacklist
+	@CandidateID INT = NULL,
+	@Reason VARCHAR(50) = NULL
+AS
+BEGIN
+IF(@CandidateID IS NULL)
+    PRINT('ERROR. Must provide valid CandidateID to update Blacklist.')
+ELSE
+BEGIN
+	INSERT Recruitment.Blacklist(
+		CandidateID, ProcessedDate, Reason
+	) VALUES
+	(@CandidateID, GETDATE(), @Reason)
+END
 END
 GO
 -- Security and Roles
@@ -713,8 +869,6 @@ GRANT SELECT, UPDATE, DELETE, INSERT ON Recruitment.Documents TO Candidates
 GRANT SELECT, UPDATE, DELETE ON Recruitment.Candidates TO Candidates
 GRANT SELECT ON Recruitment.Applications TO Candidates
 
--- Transactions
--- Query 1
 -- Populated values insertion
 INSERT dbo.Departments (
     DepartmentID, DepartmentName, ChairmanName, Email, Phone
@@ -739,7 +893,7 @@ SET IDENTITY_INSERT [Recruitment].[Documents] ON
 INSERT Recruitment.Documents (
     DocumentID, CandidateID, CVs, ReferenceLetter, CoverLetter
 ) VALUES
-(3384, 749303, 'www.corp/humanresources/38428gq', 'www.corp/humanresources/38411nu', 'www.corp/humanresources/55428qq')
+(3384, 749303, 'www.goodcompany/humanresources/38428gq', 'www.goodcompany/humanresources/38411nu', 'www.goodcompany/humanresources/55428qq')
 SET IDENTITY_INSERT [Recruitment].[Documents] OFF
 
 SET IDENTITY_INSERT [Recruitment].[Applications] ON
@@ -779,8 +933,8 @@ SET IDENTITY_INSERT [Recruitment].[Tests] ON
 INSERT Recruitment.Tests (
     TestID, ApplicationID, StartTime, EndTime, Type, Round, Answers, Grade
 ) VALUES
-(38294233, 13765338, '2022-07-10 03:00:00', '2022-07-10 04:00:00', 'Online', 1, 'www.corp/humanresources/38411313nxad', 'Passed'),
-(38294234, 13765338, '2022-07-16 03:00:00', '2022-07-16 04:00:00', 'Online', 2, 'www.corp/humanresources/48031313vpqu', 'Failed')
+(38294233, 13765338, '2022-07-10 03:00:00', '2022-07-10 04:00:00', 'Online', 1, 'www.goodcompany/humanresources/38411313nxad', 'Passed'),
+(38294234, 13765338, '2022-07-16 03:00:00', '2022-07-16 04:00:00', 'Online', 2, 'www.goodcompany/humanresources/48031313vpqu', 'Failed')
 SET IDENTITY_INSERT [Recruitment].[Tests] OFF
 
 SET IDENTITY_INSERT [Recruitment].[Evaluations] ON
@@ -790,31 +944,18 @@ INSERT Recruitment.Evaluations(
 (38317920, 13765338, 'Good', 'Passed')
 SET IDENTITY_INSERT [Recruitment].[Evaluations] OFF
 
-SET IDENTITY_INSERT [Recruitment].[Reimbursements] ON
 INSERT Recruitment.Reimbursements (
-    ReimbursementID, ApplicationID, Request, Processed, Amount
+    ReimbursementID, ApplicationID, Required, Status, AmountApproved, Expense, AirlineReservationDetail, HotelReservationDetail, CarRentalDetail
 ) VALUES
-(24898, 13765338, 'Accepted', 'Processing', '130000')
-SET IDENTITY_INSERT [Recruitment].[Reimbursements] OFF
+(24898, 13765338, 1, 'Processing', 0, 3000, 'www.goodcompany/humanresources/48479313FGNI', 'www.goodcompany/humanresources/48479313QQNV', 'www.goodcompany/humanresources/48479313OVPJ')
 
-SET IDENTITY_INSERT [Recruitment].[Onboardings] ON
 INSERT Recruitment.Onboardings (
-    OnboardingID, CandidateID, StartDate
+    OnboardingID, ApplicationID, SpecialistID, BackgroundCheck, WorkingDate, AttendingDate, Status
 ) VALUES
-(938492, 749303, '2022-08-10 12:00:00')
-SET IDENTITY_INSERT [Recruitment].[Onboardings] OFF
+(938492, 13765338, 482803, 1, '2022-08-10 12:00:00', '2022-08-05 12:00:00', 'Onboard')
 GO
--- Triggers
---CREATE TRIGGER tgCleanInvalidCandidate
---    ON Candidates
---    AFTER INSERT, UPDATE
---AS
---IF EXISTS(
---    DELETE Candidates
---    WHERE CandidateID < 100000 OR CandidateID > 1000000
---)
---GO
 
+-- Triggers
 CREATE TRIGGER tgCreateInterview 
 	ON Recruitment.Interviews AFTER INSERT
 AS 
@@ -862,4 +1003,39 @@ END
 ELSE
 PRINT('Test insertion failed.')
 GO
-	
+
+CREATE TRIGGER tgCreateEvaluation
+	ON Recruitment.Evaluations AFTER INSERT
+AS
+IF EXISTS(SELECT * FROM INSERTED)
+BEGIN
+DECLARE @EvaluationID VARCHAR(50) = CONVERT(VARCHAR, (SELECT EvaluationID FROM INSERTED))
+PRINT('New Evaluation created, EvaluationID=' + @EvaluationID)
+END
+ELSE
+PRINT('Evaluation insertion failed.')
+GO
+
+CREATE TRIGGER tgCreateReimbursement
+	ON Recruitment.Reimbursements AFTER INSERT
+AS
+IF EXISTS(SELECT * FROM INSERTED)
+BEGIN
+DECLARE @ReimbursementID VARCHAR(50) = CONVERT(VARCHAR, (SELECT ReimbursementID FROM INSERTED))
+PRINT('New Reimbursement created, ReimbursementID=' + @ReimbursementID)
+END
+ELSE
+PRINT('Reimbursement insertion failed.')
+GO
+
+CREATE TRIGGER tgCreateOnboarding
+	ON Recruitment.Onboardings AFTER INSERT
+AS
+IF EXISTS(SELECT * FROM INSERTED)
+BEGIN
+DECLARE @OnboardingID VARCHAR(50) = CONVERT(VARCHAR, (SELECT OnboardingID FROM INSERTED))
+PRINT('New Onboarding created, OnboardingID=' + @OnboardingID)
+END
+ELSE
+PRINT('Onboarding insertion failed.')
+GO
